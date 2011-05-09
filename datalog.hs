@@ -1,63 +1,81 @@
+import Control.Monad
 import qualified Data.Map as Map
+import qualified Data.Set as Set
+import System.Environment
+import System.IO
 import Text.ParserCombinators.Parsec
-
--- Term ::= Constant 
---          Variable
---          Predicate Term*
 
 data Term = Constant String
           | Variable String
           | Function String [Term]
           deriving (Eq, Ord)
 
-parseTerm :: String -> Either ParseError Term
-parseTerm s = parse term "" s
+data Rule = Rule Term [Term]
+          deriving (Eq, Ord)
+
+ident :: Parser String
+ident = many1 alphaNum
 
 term :: Parser Term
-term = do { try (char '?')
-          ; v <- many1 alphaNum
-          ; return (Variable v)
-          }
-   <|> do { try (char '(')
-          ; skipMany space
-          ; p <- many1 alphaNum
-          ; skipMany space
-          ; xs <- term `sepEndBy` many space
-          ; char ')'
-          ; return (Function p xs)
-          }
-   <|> do { c <- many1 alphaNum
-          ; return (Constant c)
-          }
+term = do try (char '?')
+          v <- ident
+          return (Variable v)
+   <|> do try (char '(')
+          spaces
+          p <- ident
+          spaces
+          xs <- term `sepEndBy` spaces
+          char ')'
+          return (Function p xs)
+   <|> do c <- ident
+          return (Constant c)
 
+rule :: Parser Rule
+rule = do try (char '(' >> skipMany space >> string "<=")
+          spaces
+          h <- term
+          spaces
+          b <- term `sepEndBy` spaces
+          char ')'
+          return (Rule h b)
+   <|> do h <- term
+          return (Rule h [])
+
+showTerm :: String -> Term -> String
+showTerm s t = s ++ " " ++ show t
+ 
 instance Show Term where
-  show (Constant c) = c
-  show (Variable v) = "?" ++ v
-  show (Function p xs) = "( " ++ p ++ showTerms xs ++ " )" where
-    showTerms [] = ""
-    showTerms (x:xs) = " " ++ show x ++ showTerms xs
+  show (Constant c)    = c
+  show (Variable v)    = "?" ++ v
+  show (Function p xs) = "( " ++ p ++ (foldl showTerm "" xs) ++ " )" 
+     
+instance Show Rule where
+  show (Rule h b) = "( <= " ++ show h ++ (foldl showTerm "" b) ++ " )" 
 
 -- Artificial Intelligence a Modern Approach (3rd edition):
--- TODO: Copy the definition of substitutions
+-- (Text), page ???
+--
+-- These follow from the defintion of substitution
 
-data Sub = Sub (Map.Map Term Term)
+type Sub = Map.Map Term Term
 
-instance Show Sub where
-  show (Sub m) = "{" ++ showSubs (Map.toList m) ++ " }" where
-    showSubs [] = ""
-    showSubs ((v,t):ss) = " " ++ show v ++ "/" ++ show t ++ showSubs ss
+subst :: Sub -> Term -> Term
+subst _ (Constant c) = (Constant c)
+subst theta (Variable v) = case Map.lookup (Variable v) theta of
+  (Just val) -> subst theta val
+  Nothing    -> (Variable v)
+subst theta (Function p xs) = (Function p (map (subst theta) xs))
 
 -- Artificial Intelligence a Modern Approach (3rd edition):
--- (Text), page 323
+-- (Text), page ???
+--
+-- COMPOSE(t1, t2) is the substitution whose effect is identical to the 
+-- effect of applying each substitution in turn.  That is,
+-- 
+-- SUBST(COMPOSE(t1, t2), p) = SUBST(t2, SUBST(t1, p))
 
-subst :: Term -> Sub -> Term
-subst (Constant c) _ = (Constant c)
-subst (Variable v) (Sub m) = case Map.lookup (Variable v) m of
-  (Just t) -> subst t (Sub m)
-  Nothing -> (Variable v)
-subst (Function p xs) theta = (Function p (substTerms xs theta)) where
-  substTerms [] _ = []
-  substTerms (x:xs) theta = subst x theta : substTerms xs theta
+compose :: Sub -> Sub -> Sub
+compose t1 t2 = Map.map (subst t2) t1
 
 -- Artificial Intelligence a Modern Approach (3rd edition): 
 -- Figure 9.1, page 328
@@ -87,10 +105,10 @@ subst (Function p xs) theta = (Function p (substTerms xs theta)) where
 -- else if OCCUR-CHECK?(var, x) then return failure *
 -- else return add {var/x} to theta
 --
--- * Prolog omits this
+-- * This is omitted by prolog
 
 unify :: Term -> Term -> Maybe Sub
-unify x y = unify' x y (Just (Sub Map.empty))
+unify x y = unify' x y (Just Map.empty)
 
 unify' :: Term -> Term -> Maybe Sub -> Maybe Sub
 unify' _ _ Nothing = Nothing
@@ -100,17 +118,18 @@ unify' (Variable x) y theta = unifyVar (Variable x) y theta
 unify' x (Variable y) theta = unifyVar (Variable y) x theta
 unify' (Function p xs) (Function q ys) theta
   | (p /= q) || (length xs /= length ys) = Nothing
-  | otherwise = foldl (\t (x,y) -> unify' x y t) theta (zip xs ys)
+  | otherwise = foldl unifyArg theta (zip xs ys)
+    where unifyArg theta (x,y) = unify' x y theta
 unify' _ _ _ = Nothing
 
 unifyVar :: Term -> Term -> Maybe Sub -> Maybe Sub
 unifyVar _ _ Nothing = Nothing
-unifyVar var x (Just (Sub m))
-  | Map.member var m = case Map.lookup var m of
-    (Just val) -> unify' val x (Just (Sub m))
-  | Map.member x m = case Map.lookup x m of
-    (Just val) -> unify' x val (Just (Sub m))
-  | otherwise = Just (Sub (Map.insert var x m))
+unifyVar var x (Just theta)
+  | Map.member var theta = case Map.lookup var theta of
+    (Just val) -> unify' val x (Just theta)
+  | Map.member x theta = case Map.lookup x theta of
+    (Just val) -> unify' x val (Just theta)
+  | otherwise = Just (Map.insert var x theta)
 
 -- Artificial Intelligence a Modern Approach (3rd edition):
 -- Figure 9.3, page 332 
@@ -127,3 +146,37 @@ unifyVar var x (Just (Sub m))
 --   new_goals <- [p1,...,pn|REST(goals)]
 --   answers <- FOL-BC-ASK(KB, new_goals, COMPOSE(thetaDelta, theta)) U answers
 -- return answers
+
+folBcAsk :: [Rule] -> Term -> [Term]
+folBcAsk kb query = fmap (\theta -> subst theta query) (Set.toList results)
+  where results = folBcAsk' kb [query] Map.empty
+
+folBcAsk' :: [Rule] -> [Term] -> Sub -> Set.Set Sub
+folBcAsk' _ [] theta = Set.singleton theta
+folBcAsk' kb (first:rest) theta = foldl tryRule Set.empty kb
+  where qDelta = subst theta first
+        tryRule answers (Rule q ps) = case unify q qDelta of
+          (Just td) -> Set.union answers (folBcAsk' kb (ps ++ rest) td)
+          Nothing -> answers
+    
+-- Driver code
+-- Parses a knowledge base and enters an infinite ask loop
+
+readKb :: String -> IO [Rule]
+readKb path = do contents <- readFile path
+                 case parse (rule `sepEndBy` spaces) "" contents of
+                      (Left pe)  -> error (show pe)
+                      (Right ts) -> return ts
+
+main = do args <- getArgs
+          if null args 
+             then error "No knowledge base specified!"
+             else do kb <- readKb (head args)
+                     mapM_ print kb
+                     forever $ do
+                               putStr "> "
+                               hFlush stdout
+                               input <- getLine
+                               case parse term "" input of
+                                    (Left pe) -> putStrLn (show pe)
+                                    (Right q) -> mapM_ print (folBcAsk kb q)
