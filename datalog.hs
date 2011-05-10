@@ -75,7 +75,7 @@ subst theta (Function p xs) = (Function p (map (subst theta) xs))
 -- SUBST(COMPOSE(t1, t2), p) = SUBST(t2, SUBST(t1, p))
 
 compose :: Sub -> Sub -> Sub
-compose t1 t2 = Map.map (subst t2) t1
+compose t1 t2 = Map.union t1 t2
 
 -- Artificial Intelligence a Modern Approach (3rd edition): 
 -- Figure 9.1, page 328
@@ -153,10 +153,12 @@ folBcAsk kb query = fmap (\theta -> subst theta query) (Set.toList results)
 
 folBcAsk' :: [Rule] -> [Term] -> Sub -> Set.Set Sub
 folBcAsk' _ [] theta = Set.singleton theta
-folBcAsk' kb (first:rest) theta = foldl tryRule Set.empty kb
-  where qDelta = subst theta first
+folBcAsk' kb goals theta = foldl tryRule Set.empty kb
+  where qDelta = subst theta (head goals)
         tryRule answers (Rule q ps) = case unify q qDelta of
-          (Just td) -> Set.union answers (folBcAsk' kb (ps ++ rest) td)
+          (Just td) -> Set.union answers (folBcAsk' kb newGoals newTheta)
+                       where newGoals = ps ++ (tail goals)
+                             newTheta = compose td theta
           Nothing -> answers
     
 -- Driver code
