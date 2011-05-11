@@ -1,0 +1,7 @@
+(neighbor 1 2)
+(neighbor 2 3)
+(neighbor 3 4)
+(neighbor 4 5)
+
+(<= (adjacent ?x ?y) (neighbor ?x ?y))
+(<= (adjacent ?x ?z) (neighbor ?x ?y) (adjacent ?y ?z))
