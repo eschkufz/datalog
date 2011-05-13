@@ -149,16 +149,19 @@ folBcAsk kb query = folBcAsk' kb [query] Map.empty
 folBcAsk' :: [Rule] -> [Term] -> Sub -> Set.Set Sub
 folBcAsk' _ [] theta = Set.singleton theta
 folBcAsk' kb goals theta = foldl tryRule Set.empty kb'
-    where qDelta = subst theta (head goals)
-          kb'    = map standardizeApart kb
+    where kb'    = map standardizeApart kb
+          qDelta = subst theta (head goals)
           tryRule answers (Rule q ps) = case unify q qDelta of
-              (Just td) -> Set.union answers (folBcAsk' kb newGoals newTheta)
+              (Just td) -> Set.union answers (folBcAsk' kb' newGoals newTheta)
                   where newGoals = ps ++ (tail goals)
                         newTheta = compose td theta
               Nothing   -> answers
 
 standardizeApart :: Rule -> Rule
-standardizeApart r = r
+standardizeApart (Rule h b) = (Rule (sa' h) (map sa' b))
+    where sa' (Constant c)    = (Constant c)
+          sa' (Variable v)    = (Variable ("_" ++ v))
+          sa' (Function p xs) = (Function p (map sa' xs))
 
 -- Parses the contents of a file into a list of rules
 readKb :: String -> IO [Rule]
