@@ -17,40 +17,34 @@ ident :: Parser String
 ident = many1 alphaNum
 
 term :: Parser Term
-term = do try (char '?')
+term = do _ <- try (char '?')
           v <- ident
           return (Variable v)
-   <|> do try (char '(')
-          spaces
-          p <- ident
-          spaces
-          xs <- term `sepEndBy` spaces
-          char ')'
+   <|> do _  <- try (char '(')
+          p  <- spaces >> ident
+          xs <- spaces >> term `sepEndBy` spaces
+          _  <- char ')'
           return (Function p xs)
    <|> do c <- ident
           return (Constant c)
 
 rule :: Parser Rule
-rule = do try (char '(' >> skipMany space >> string "<=")
-          spaces
-          h <- term
-          spaces
-          b <- term `sepEndBy` spaces
-          char ')'
+rule = do _ <- try (char '(' >> skipMany space >> string "<=")
+          h <- spaces >> term
+          b <- spaces >> term `sepEndBy` spaces
+          _ <- char ')'
           return (Rule h b)
    <|> do h <- term
           return (Rule h [])
 
-showTerm :: String -> Term -> String
-showTerm s t = s ++ " " ++ show t
- 
 instance Show Term where
   show (Constant c)    = c
   show (Variable v)    = "?" ++ v
-  show (Function p xs) = "( " ++ p ++ (foldl showTerm "" xs) ++ " )" 
+  show (Function p xs) = "( " ++ p ++ " " ++ (unwords . map show) xs ++ " )" 
      
 instance Show Rule where
-  show (Rule h b) = "( <= " ++ show h ++ (foldl showTerm "" b) ++ " )" 
+  show (Rule h []) = show h 
+  show (Rule h b)  = "( <= " ++ show h ++ " " ++ (unwords . map show) b ++ " )" 
 
 -- Artificial Intelligence a Modern Approach (3rd edition):
 -- (Text), page ???
@@ -62,8 +56,8 @@ type Sub = Map.Map Term Term
 subst :: Sub -> Term -> Term
 subst _ (Constant c) = (Constant c)
 subst theta (Variable v) = case Map.lookup (Variable v) theta of
-  (Just val) -> subst theta val
-  Nothing    -> (Variable v)
+                                (Just val) -> subst theta val
+                                Nothing    -> (Variable v)
 subst theta (Function p xs) = (Function p (map (subst theta) xs))
 
 -- Artificial Intelligence a Modern Approach (3rd edition):
@@ -118,19 +112,16 @@ unify' (Variable x) y theta = unifyVar (Variable x) y theta
 unify' x (Variable y) theta = unifyVar (Variable y) x theta
 unify' (Function p xs) (Function q ys) theta
   | (p /= q) || (length xs /= length ys) = Nothing
-  | otherwise = foldl unifyArg theta (zip xs ys)
-    where unifyArg theta (x,y) = unify' x y theta
+  | otherwise                            = foldl (flip (uncurry unify')) theta (zip xs ys)
 unify' _ _ _ = Nothing
 
 unifyVar :: Term -> Term -> Maybe Sub -> Maybe Sub
 unifyVar _ _ Nothing = Nothing
-unifyVar var x (Just theta)
-  | Map.member var theta = case Map.lookup var theta of
-    (Just val) -> unify' val x (Just theta)
-  | Map.member x theta = case Map.lookup x theta of
-    (Just val) -> unify' x val (Just theta)
-  | otherwise = Just (Map.insert var x theta)
-
+unifyVar var x (Just theta) 
+  | Map.member var theta = unify' (theta Map.! var) x (Just theta)
+  | Map.member x theta   = unify' x (theta Map.! x) (Just theta)
+  | otherwise            = Just (Map.insert var x theta)
+     
 -- Artificial Intelligence a Modern Approach (3rd edition):
 -- Figure 9.3, page 332 
 -- Function FOL-BC-ASK(KB, goals, theta) returns a set of substitutions
@@ -147,38 +138,51 @@ unifyVar var x (Just theta)
 --   answers <- FOL-BC-ASK(KB, new_goals, COMPOSE(thetaDelta, theta)) U answers
 -- return answers
 
-folBcAsk :: [Rule] -> Term -> [Term]
-folBcAsk kb query = fmap (\theta -> subst theta query) (Set.toList results)
-  where results = folBcAsk' kb [query] Map.empty
+folBcAsk :: [Rule] -> Term -> Set.Set Sub
+folBcAsk kb query = folBcAsk' kb [query] Map.empty
 
 folBcAsk' :: [Rule] -> [Term] -> Sub -> Set.Set Sub
 folBcAsk' _ [] theta = Set.singleton theta
 folBcAsk' kb goals theta = foldl tryRule Set.empty kb
-  where qDelta = subst theta (head goals)
+  where qDelta                      = subst theta (head goals)
         tryRule answers (Rule q ps) = case unify q qDelta of
           (Just td) -> Set.union answers (folBcAsk' kb newGoals newTheta)
                        where newGoals = ps ++ (tail goals)
                              newTheta = compose td theta
-          Nothing -> answers
+          Nothing   -> answers
     
--- Driver code
--- Parses a knowledge base and enters an infinite ask loop
-
+-- Parses the contents of a file into a list of rules
 readKb :: String -> IO [Rule]
 readKb path = do contents <- readFile path
                  case parse (rule `sepEndBy` spaces) "" contents of
-                      (Left pe)  -> error (show pe)
-                      (Right ts) -> return ts
+                      (Left pe)  -> ioError $ userError (show pe)
+                      (Right rs) -> return rs
 
+-- Parses user input from the command line into a term
+readQuery :: IO Term
+readQuery = do putStr "> "
+               hFlush stdout
+               input <- getLine
+               case parse term "" input of
+                    (Left pe) -> ioError $ userError (show pe)
+                    (Right t) -> return t
+
+-- Queries kb and returns a list of unique answers                    
+ask :: [Rule] -> Term -> [Term]
+ask kb query = Set.toList $ Set.map (flip subst query) results
+               where results = folBcAsk kb query
+
+-- Reads a kb then loops forever answering queries               
+main' :: String -> IO ()
+main' path = do kb <- readKb path
+                mapM_ print kb
+                forever $ do query <- readQuery
+                             mapM_ print $ ask kb query
+
+-- main                              
+main :: IO ()
 main = do args <- getArgs
-          if null args 
-             then error "No knowledge base specified!"
-             else do kb <- readKb (head args)
-                     mapM_ print kb
-                     forever $ do
-                               putStr "> "
-                               hFlush stdout
-                               input <- getLine
-                               case parse term "" input of
-                                    (Left pe) -> putStrLn (show pe)
-                                    (Right q) -> mapM_ print (folBcAsk kb q)
+          let usage = "<exec> [kb.path]"
+          case args of 
+               [path] -> main' path
+               _      -> error usage

@@ -1,7 +1,7 @@
-(neighbor 1 2)
-(neighbor 2 3)
-(neighbor 3 4)
-(neighbor 4 5)
+(edge 1 2)
+(edge 2 3)
+(edge 3 4)
+(edge 4 5)
 
-(<= (adjacent ?x ?y) (neighbor ?x ?y))
-(<= (adjacent ?x ?z) (neighbor ?x ?y) (adjacent ?y ?z))
+(<= (path ?x ?y) (edge ?x ?y))
+(<= (path ?x ?z) (edge ?x ?y) (path ?y ?z))
