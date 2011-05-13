@@ -1,20 +1,18 @@
-import Control.Monad
-import qualified Data.Map as Map
-import qualified Data.Set as Set
+import Control.Monad                 
+import qualified Data.Map as Map    
+import qualified Data.Set as Set   
 import System.Environment
 import System.IO
+import System.IO.Error hiding (try)
 import Text.ParserCombinators.Parsec
 
 data Term = Constant String
           | Variable String
           | Function String [Term]
-          deriving (Eq, Ord)
+    deriving (Eq, Ord)
 
 data Rule = Rule Term [Term]
-          deriving (Eq, Ord)
-
-ident :: Parser String
-ident = many1 alphaNum
+    deriving (Eq, Ord)
 
 term :: Parser Term
 term = do _ <- try (char '?')
@@ -27,6 +25,7 @@ term = do _ <- try (char '?')
           return (Function p xs)
    <|> do c <- ident
           return (Constant c)
+    where ident = many1 alphaNum
 
 rule :: Parser Rule
 rule = do _ <- try (char '(' >> skipMany space >> string "<=")
@@ -38,13 +37,15 @@ rule = do _ <- try (char '(' >> skipMany space >> string "<=")
           return (Rule h [])
 
 instance Show Term where
-  show (Constant c)    = c
-  show (Variable v)    = "?" ++ v
-  show (Function p xs) = "( " ++ p ++ " " ++ (unwords . map show) xs ++ " )" 
+    show (Constant c)    = c
+    show (Variable v)    = "?" ++ v
+    show (Function p xs) = "( " ++ p ++ " " ++ showTerms xs ++ " )" 
+        where showTerms = unwords . map show
      
 instance Show Rule where
-  show (Rule h []) = show h 
-  show (Rule h b)  = "( <= " ++ show h ++ " " ++ (unwords . map show) b ++ " )" 
+    show (Rule h []) = show h 
+    show (Rule h b)  = "( <= " ++ show h ++ " " ++ showTerms b ++ " )" 
+        where showTerms = unwords . map show
 
 -- Artificial Intelligence a Modern Approach (3rd edition):
 -- (Text), page ???
@@ -56,9 +57,10 @@ type Sub = Map.Map Term Term
 subst :: Sub -> Term -> Term
 subst _ (Constant c) = (Constant c)
 subst theta (Variable v) = case Map.lookup (Variable v) theta of
-                                (Just val) -> subst theta val
-                                Nothing    -> (Variable v)
-subst theta (Function p xs) = (Function p (map (subst theta) xs))
+    (Just val) -> subst theta val
+    Nothing    -> (Variable v)
+subst theta (Function p xs) = (Function p (map subst' xs))
+    where subst' = subst theta
 
 -- Artificial Intelligence a Modern Approach (3rd edition):
 -- (Text), page ???
@@ -107,20 +109,23 @@ unify x y = unify' x y (Just Map.empty)
 unify' :: Term -> Term -> Maybe Sub -> Maybe Sub
 unify' _ _ Nothing = Nothing
 unify' x y theta
-  | x == y = theta
+    | x == y = theta
 unify' (Variable x) y theta = unifyVar (Variable x) y theta
 unify' x (Variable y) theta = unifyVar (Variable y) x theta
 unify' (Function p xs) (Function q ys) theta
-  | (p /= q) || (length xs /= length ys) = Nothing
-  | otherwise                            = foldl (flip (uncurry unify')) theta (zip xs ys)
+    | p /= q                 = Nothing
+    | length xs /= length ys = Nothing
+    | otherwise              = foldl unify'' theta pairs
+    where unify'' = flip $ uncurry unify'
+          pairs   = zip xs ys
 unify' _ _ _ = Nothing
 
 unifyVar :: Term -> Term -> Maybe Sub -> Maybe Sub
 unifyVar _ _ Nothing = Nothing
 unifyVar var x (Just theta) 
-  | Map.member var theta = unify' (theta Map.! var) x (Just theta)
-  | Map.member x theta   = unify' x (theta Map.! x) (Just theta)
-  | otherwise            = Just (Map.insert var x theta)
+    | Map.member var theta = unify' (theta Map.! var) x (Just theta)
+    | Map.member x theta   = unify' x (theta Map.! x) (Just theta)
+    | otherwise            = Just (Map.insert var x theta)
      
 -- Artificial Intelligence a Modern Approach (3rd edition):
 -- Figure 9.3, page 332 
@@ -143,14 +148,14 @@ folBcAsk kb query = folBcAsk' kb [query] Map.empty
 
 folBcAsk' :: [Rule] -> [Term] -> Sub -> Set.Set Sub
 folBcAsk' _ [] theta = Set.singleton theta
-folBcAsk' kb goals theta = foldl tryRule Set.empty kb
-  where qDelta                      = subst theta (head goals)
-        tryRule answers (Rule q ps) = case unify q qDelta of
-          (Just td) -> Set.union answers (folBcAsk' kb newGoals newTheta)
-                       where newGoals = ps ++ (tail goals)
-                             newTheta = compose td theta
-          Nothing   -> answers
-    
+folBcAsk' kb goals theta = foldl (tryRule qd) Set.empty kb
+    where qd = subst theta (head goals)
+          tryRule qDelta answers (Rule q ps) = case unify q qDelta of
+              (Just td) -> Set.union answers (folBcAsk' kb newGoals newTheta)
+                  where newGoals = ps ++ (tail goals)
+                        newTheta = compose td theta
+              Nothing   -> answers
+
 -- Parses the contents of a file into a list of rules
 readKb :: String -> IO [Rule]
 readKb path = do contents <- readFile path
@@ -169,8 +174,15 @@ readQuery = do putStr "> "
 
 -- Queries kb and returns a list of unique answers                    
 ask :: [Rule] -> Term -> [Term]
-ask kb query = Set.toList $ Set.map (flip subst query) results
-               where results = folBcAsk kb query
+ask kb query = Set.toList $ Set.map subst' results 
+    where subst'  = flip subst query
+          results = folBcAsk kb query
+
+-- Generic exception handling: just print the error
+handler :: IOError -> IO ()
+handler e 
+    | isUserError e = putStrLn $ ioeGetErrorString e
+    | otherwise     = error "Unhandled exception!"
 
 -- Reads a kb then loops forever answering queries               
 main' :: String -> IO ()
@@ -178,6 +190,8 @@ main' path = do kb <- readKb path
                 mapM_ print kb
                 forever $ do query <- readQuery
                              mapM_ print $ ask kb query
+                     `catch` handler
+        `catch` handler          
 
 -- main                              
 main :: IO ()
