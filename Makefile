@@ -1,5 +1,6 @@
 all:
-	ghc -Wall -O2 --make -package parsec datalog.hs
+	ghc -Wall -O2 --make -package parsec Datalog.hs
+	ghc -Wall -O2 --make Main.hs
 
 clean:
-	rm -f datalog datalog.hi datalog.o
+	rm -f Main *.hi *.o
