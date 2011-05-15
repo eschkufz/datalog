@@ -15,11 +15,11 @@ readKb path = do contents <- readFile path
                  return $ readRules contents
 
 -- Prompts the user for input and attempts to parse it as a term
-readQuery :: IO Term
+readQuery :: IO Sentence
 readQuery = do putStr "> "
                hFlush stdout
                input <- getLine
-               return $ readTerm input
+               return (read input :: Sentence)
 
 -- Read-eval-print loop
 readEvalPrint :: [Rule] -> IO ()
