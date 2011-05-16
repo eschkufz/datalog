@@ -1,0 +1,14 @@
+(s 1 a)
+(s 2 a)
+
+(s 2 b)
+(s 3 b)
+(s 4 b)
+
+(s 5 c)
+
+(<= (neighbors ?x ?y) (s ?x ?z) (s ?y ?z) (distinct ?x ?y))
+(<= (onePlus ?x) (neighbors ?x ?y))
+(<= (twoPlus ?x) (neighbors ?x ?y) (neighbors ?x ?z) (distinct ?y ?z))
+(<= (one ?x) (onePlus ?x) (not (twoPlus ?x)))
+
