@@ -1,0 +1,15 @@
+(marriages b1 g1)
+(marriages g2 b2)
+(marriages g3 b3)
+
+(male b1)
+(male b2)
+(male b3)
+(male b4)
+(male b5)
+
+(<= (married ?x) (marriages ?x ?y))
+(<= (married ?x) (marriages ?y ?x))
+
+(<= (bachelor ?x) (male ?x) (not (married ?x)))
+  
