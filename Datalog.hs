@@ -30,7 +30,7 @@ data Literal = Sentence Sentence
 data Rule = Rule Sentence [Literal]
     deriving (Eq, Ord)
 
--- From string methods
+-- Read:
 
 ident :: Parser String
 ident = many1 alphaNum
@@ -103,7 +103,7 @@ readRules s = case parse (rule `sepEndBy` spaces) "" s of
                    (Left pe)  -> error (show pe)
                    (Right rs) -> rs
 
--- To string methods
+-- Show:
 
 showMany :: (Show a) => [a] -> String
 showMany = unwords . map show
