@@ -6,4 +6,5 @@
 (q 4)
 (q 5)
 
+// r = SELECT x FROM p where x NOT IN q
 (<= (r ?x) (p ?x) (not (q ?x)))

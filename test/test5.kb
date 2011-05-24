@@ -1,3 +1,5 @@
+// DB Qual 1:
+
 (s 1 a)
 (s 2 a)
 
@@ -11,4 +13,3 @@
 (<= (onePlus ?x) (neighbors ?x ?y))
 (<= (twoPlus ?x) (neighbors ?x ?y) (neighbors ?x ?z) (distinct ?y ?z))
 (<= (one ?x) (onePlus ?x) (not (twoPlus ?x)))
-

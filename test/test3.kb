@@ -6,4 +6,5 @@
 (q 2)
 (q 3)
 
+// r = SELECT x, y FROM p, q WHERE x <> y
 (<= (r ?x ?y) (p ?x) (q ?y) (distinct ?x ?y))
