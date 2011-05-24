@@ -3,15 +3,19 @@ module Datalog
 , Sentence(..)
 , Literal(..)
 , Rule(..)
-, readRules
 , ask
+, rules
+, sentence
 ) where
 
 import qualified Data.Map as Map    
 import qualified Data.Set as Set   
-import Text.ParserCombinators.Parsec
 
--- Datalog type hierarchy
+import Text.ParserCombinators.Parsec
+import Text.ParserCombinators.Parsec.Language
+import Text.ParserCombinators.Parsec.Token
+
+-- Type hierarchy:
 
 data Term = Constant String
           | Variable String
@@ -30,78 +34,92 @@ data Literal = Sentence Sentence
 data Rule = Rule Sentence [Literal]
     deriving (Eq, Ord)
 
--- Read:
+-- Parsing:
 
-ident :: Parser String
-ident = many1 alphaNum
+datalog :: LanguageDef st
+datalog = emptyDef 
+          { commentStart  = "/*"
+          , commentEnd    = "*/"
+          , commentLine   = "//"
+          , identStart    = alphaNum <|> char '_' 
+          , identLetter   = alphaNum <|> char '_'
+          , caseSensitive = True 
+          }
+
+tp :: TokenParser st
+tp = makeTokenParser datalog
+
+tConstant :: Parser Term
+tConstant = do c <- lexeme tp $ identifier tp
+               return (Constant c)
+
+tVariable :: Parser Term
+tVariable = do _ <- char '?'
+               v <- lexeme tp $ identifier tp
+               return (Variable v)
+
+tFunction :: Parser Term
+tFunction = do _  <- symbol tp "("
+               p  <- lexeme tp $ identifier tp
+               xs <- manyTill term $ symbol tp ")"
+               return (Function p xs)
 
 term :: Parser Term
-term = do _ <- try (char '?')
-          v <- ident
-          return (Variable v)
-   <|> do _  <- try (char '(')
-          p  <- spaces >> ident
-          xs <- spaces >> term `sepEndBy` spaces
-          _  <- char ')'
-          return (Function p xs)
-   <|> do c <- ident
-          return (Constant c)
+term = try tVariable <|> try tFunction <|> tConstant
+
+tProposition :: Parser Sentence
+tProposition = do p <- lexeme tp $ identifier tp
+                  return (Proposition p)
+
+tRelation :: Parser Sentence
+tRelation = do _  <- symbol tp "("
+               p  <- lexeme tp $ identifier tp
+               xs <- manyTill term $ symbol tp ")"
+               return (Relation p xs)
 
 sentence :: Parser Sentence
-sentence = do _  <- try (char '(')
-              p  <- spaces >> ident
-              xs <- spaces >> term `sepEndBy` spaces
-              _  <- char ')'
-              return (Relation p xs)
-       <|> do p <- ident
-              return (Proposition p)
+sentence = try tProposition <|> tRelation
+
+lSentence :: Parser Literal
+lSentence = do s <- sentence
+               return (Sentence s)
+
+lNot :: Parser Literal
+lNot = do _ <- symbol tp "("
+          _ <- symbol tp "not"
+          l <- literal
+          _ <- symbol tp ")"
+          return (Not l)
+
+lDistinct :: Parser Literal
+lDistinct = do _  <- symbol tp "("
+               _  <- symbol tp "distinct"
+               t1 <- term
+               t2 <- term
+               _  <- symbol tp ")"
+               return (Distinct t1 t2)
 
 literal :: Parser Literal
-literal = do _ <- try (char '(' >> skipMany space >> string "not")
-             l <- spaces >> literal 
-             _ <- spaces >> char ')'
-             return (Not l)
-      <|> do _  <- try (char '(' >> skipMany space >> string "distinct")
-             t1 <- spaces >> term
-             t2 <- spaces >> term
-             _  <- spaces >> char ')'
-             return (Distinct t1 t2)
-      <|> do s <- sentence
-             return (Sentence s)
+literal = try lNot <|> try lDistinct <|> lSentence
+
+rSimple :: Parser Rule
+rSimple = do h <- sentence
+             return (Rule h [])
+
+rComplex :: Parser Rule
+rComplex = do _ <- symbol tp "("
+              _ <- symbol tp "<="
+              h <- sentence
+              b <- manyTill literal $ symbol tp ")"
+              return (Rule h b)
 
 rule :: Parser Rule
-rule = do _ <- try (char '(' >> skipMany space >> string "<=")
-          h <- spaces >> sentence
-          b <- spaces >> literal `sepEndBy` spaces
-          _ <- char ')'
-          return (Rule h b)
-   <|> do h <- sentence
-          return (Rule h [])
+rule = try rSimple <|> rComplex
 
-instance Read Term where
-    readsPrec _ s = case parse term "" s of
-                         (Left pe)   -> error $ show pe
-                         (Right res) -> [(res, "")]
-
-instance Read Sentence where
-    readsPrec _ s = case parse sentence "" s of
-                         (Left pe)   -> error $ show pe
-                         (Right res) -> [(res, "")]
-
-instance Read Literal where
-    readsPrec _ s = case parse literal "" s of
-                         (Left pe)   -> error $ show pe
-                         (Right res) -> [(res, "")]
-
-instance Read Rule where
-    readsPrec _ s = case parse rule "" s of 
-                         (Left pe)   -> error $ show pe
-                         (Right res) -> [(res, "")]
-
-readRules :: String -> [Rule]
-readRules s = case parse (rule `sepEndBy` spaces) "" s of
-                   (Left pe)  -> error (show pe)
-                   (Right rs) -> rs
+rules :: Parser [Rule]
+rules = do _  <- whiteSpace tp
+           rs <- many rule
+           return rs
 
 -- Show:
 
@@ -111,10 +129,12 @@ showMany = unwords . map show
 instance Show Term where
     show (Constant c)    = c
     show (Variable v)    = "?" ++ v
+    show (Function p []) = "( " ++ p ++ " )"
     show (Function p xs) = "( " ++ p ++ " " ++ showMany xs ++ " )" 
 
 instance Show Sentence where
     show (Proposition p) = p
+    show (Relation p []) = "( " ++ p ++ " )"
     show (Relation p xs) = "( " ++ p ++ " " ++ showMany xs ++ " )"
 
 instance Show Literal where
@@ -126,9 +146,8 @@ instance Show Rule where
     show (Rule h []) = show h 
     show (Rule h b)  = "( <= " ++ show h ++ " " ++ showMany b ++ " )" 
 
--- Substitution 
--- 
--- Artificial Intelligence a Modern Approach (3rd edition):
+-- Substitution:
+-- Artificial Intelligence a Modern Approach (3rd edition)
 -- (Text), page ???
 
 type Sub = Map.Map Term Term
@@ -152,37 +171,9 @@ instance Subst Literal where
     subst theta (Not l)          = (Not (subst theta l))
     subst theta (Distinct t1 t2) = (Distinct (subst theta t1) (subst theta t2))
 
--- Unification 
--- 
--- Artificial Intelligence a Modern Approach (3rd edition): 
+-- Unification: 
+-- Artificial Intelligence a Modern Approach (3rd edition)
 -- Figure 9.1, page 328
---
--- function UNIFY(x, y, theta) returns a substitution to make x and y identical
--- inputs: x, a variable, constant, list, or compound
---         y, a variable, constant, list, or compound
---         theta, the substitution built up so far (optional, defaults to empty)
---
--- if theta = failure then return failure
--- else if x = y then return theta
--- else if VARIABLE?(x) then return UNIFY-VAR(x, y, theta)
--- else if VARIABLE?(y) then return UNIFY-VAR(y, x, theta)
--- else if COMPOUND?(x) and COMPOUND?(y) then
---   return UNIFY(x.args, y.args, UNIFY(x.OP, y.OP, theta))
--- else if LIST?(x) and LIST?(y) then
---   return UNIFY(x.REST, y.REST, UNIFY(x.FIRST, y.FIRST, theta))
--- else return failure
---
--- function UNIFY-VAR(var, x, theta) returns a substitution
--- inputs: var, a variable
---         x, any expression
---         theta, the substitution built up so far
---
--- if {var/val} \in theta then return UNIFY(val, x, theta)
--- else if {x/val} \in theta then return UNIFY(var, val, theta)
--- else if OCCUR-CHECK?(var, x) then return failure *
--- else return add {var/x} to theta
---
--- * This is omitted by prolog
 
 unify :: Sentence -> Sentence -> Maybe Sub
 unify (Proposition p) (Proposition q) 
@@ -217,22 +208,15 @@ unifyVar var x (Just theta)
     | Map.member x theta   = unify' x (theta Map.! x) (Just theta)
     | otherwise            = Just (Map.insert var x theta)
 
--- Composition
--- 
--- Artificial Intelligence a Modern Approach (3rd edition):
+-- Composition:
+-- Artificial Intelligence a Modern Approach (3rd edition)
 -- (Text), page ???
---
--- COMPOSE(t1, t2) is the substitution whose effect is identical to the 
--- effect of applying each substitution in turn.  That is,
--- 
--- SUBST(COMPOSE(t1, t2), p) = SUBST(t2, SUBST(t1, p))
 
 compose :: Sub -> Sub -> Sub
 compose t1 t2 = Map.union t1 t2
 
--- Standardizing apart
--- 
--- Artificial Intelligence a Modern Approach (3rd edition):
+-- Standardizing apart:
+-- Artificial Intelligence a Modern Approach (3rd edition)
 -- (Text), page ???
      
 class Standardize a where
@@ -255,21 +239,9 @@ instance Standardize Literal where
 instance Standardize Rule where
     standardize (Rule h b) = (Rule (standardize h) (map standardize b))
 
+-- Backward Checking:
 -- Artificial Intelligence a Modern Approach (3rd edition):
 -- Figure 9.3, page 332 
--- Function FOL-BC-ASK(KB, goals, theta) returns a set of substitutions
--- inputs: KB, a knowledge base
---         goals, a list of conjuncts forming a query (theta already applied) 
---         theta, the current substitution, initially the empty substitution {}
--- local variables: answers, a set of substitutions, initially empty
---
--- if goals is empty then return {theta}
--- qDelta <- SUBST(theta, FIRST(goals))
--- for each sentence r in KB where STANDARDIZE-APART(r) = (p1 ^ ... ^ pn => q)
---     and thetaDelta <- UNIFY(q, qDelta) succeeds
---   new_goals <- [p1,...,pn|REST(goals)]
---   answers <- FOL-BC-ASK(KB, new_goals, COMPOSE(thetaDelta, theta)) U answers
--- return answers
 
 folBcAsk :: [Rule] -> [Literal] -> Sub -> Set.Set Sub
 folBcAsk _ [] theta = Set.singleton theta
@@ -288,8 +260,9 @@ folBcAsk kb ((Distinct t1 t2):ls) theta
     | (subst theta t1) /= (subst theta t2) = folBcAsk kb ls theta
     | otherwise                            = Set.empty
 
--- A simple interface for querying a knowledge base
+-- Ask interface:
 -- Binds each resulting substitutions to the original query
+
 ask :: [Rule] -> Sentence -> [Sentence]
 ask kb query = map subst' results
     where subst'  = flip subst query
